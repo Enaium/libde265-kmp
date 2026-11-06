@@ -138,18 +138,19 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-37.0" "platforms;android-37.1" "ndk;27.0.12077973" >/dev/null
 
+      # The MinGW test binary is linked and executed on the Windows runner:
+      # Ubuntu's mingw-w64 libstdc++ (win32 threads) does not match the
+      # libstdc++ 9 sysroot Kotlin/Native links, so cross-linking the test
+      # executable here fails on gthr symbols. The archive itself is built.
       - name: Run JVM, Linux, Android host and cross-target tests
         run: >
           ./gradlew --no-daemon --stacktrace
           :libde265-kmp:jvmTest
           :libde265-kmp:linuxX64Test
           :libde265-kmp:testAndroidHostTest
-          # The MinGW test binary is linked and executed on the Windows runner.
-          # Ubuntu's mingw-w64 libstdc++ (win32 threads) does not match the
-          # libstdc++ 9 sysroot Kotlin/Native links, so cross-linking it here
-          # fails on gthr symbols; the mingw klib/archive are still built below.
           :libde265-kmp:linkDebugTestLinuxArm64
           :libde265-kmp:compileKotlinLinuxArm64
+          :libde265-kmp:buildNative_mingwX64
           --continue
 
       - name: Assemble the Android examples
