@@ -281,3 +281,5 @@ jobs:
           $entries = & jar tf $jar
           if (-not ($entries -match "de265_jni.dll")) { throw "de265_jni.dll missing from $jar" }
           Write-Output "OK: Maven Local JNI jar contains de265_jni.dll"
+
+# Re-register the workflow after the initial repository push.
