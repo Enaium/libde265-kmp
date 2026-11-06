@@ -9,7 +9,7 @@ compilerOpts = -std=c11
 # Linux sysroot keeps pthreads in a separate library.
 linkerOpts.linux_x64 = -lm -lpthread -lstdc++
 linkerOpts.linux_arm64 = -lm -lpthread -lstdc++
-linkerOpts.mingw_x64 = -lm -static -static-libgcc -static-libstdc++
+linkerOpts.mingw_x64 = -lm -lstdc++ -lwinpthread -static -static-libgcc
 linkerOpts.macos_x64 = -lm -lc++
 linkerOpts.macos_arm64 = -lm -lc++
 linkerOpts.ios_arm64 = -lm -lc++

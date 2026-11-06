@@ -244,6 +244,21 @@ kotlin {
     }
 }
 
+// The Kotlin/Native MinGW sysroot ships libstdc++ 9, which lacks symbols that
+// the newer MinGW compiler emits (__gthr_win32_mutex_*,
+// std::__throw_bad_array_new_length). Point the final MinGW link at the same
+// toolchain that built the archive, and make sure libstdc++ is actually pulled
+// in (clang's -static-libstdc++ alone does not do it).
+if (mingwStdCxxDir != null) {
+    kotlin.targets.withType<KotlinNativeTarget>().configureEach {
+        if (name == "mingwX64") {
+            binaries.configureEach {
+                linkerOpts("-L$mingwStdCxxDir", "-lstdc++", "-lwinpthread")
+            }
+        }
+    }
+}
+
 // Every Kotlin/Native target shares nativeMain/nativeTest. Wiring the
 // dependency (rather than copying the source directory into each target) keeps
 // expect/actual resolution and cinterop commonization working.
