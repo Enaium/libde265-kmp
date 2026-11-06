@@ -86,6 +86,18 @@ fun canBuildNativeTarget(targetName: String): Boolean {
 
 val cmakeExecutable: String = rootProject.extra["cmakeExecutable"] as String
 
+/**
+ * Directory that holds the cross toolchain's static libstdc++ for mingwX64.
+ * Kotlin/Native's bundled C++ runtime is older than the compiler that builds
+ * the archive, so the final link has to pick the matching archive.
+ */
+val mingwStdCxxDir: String? = runCatching {
+    val output = providers.exec {
+        commandLine("x86_64-w64-mingw32-g++", "-print-file-name=libstdc++.a")
+    }.standardOutput.asText.get().trim()
+    File(output).takeIf { it.isFile }?.parent
+}.getOrNull()
+
 // ==================== Kotlin Multiplatform ====================
 kotlin {
     jvm {
@@ -169,6 +181,9 @@ kotlin {
                         "-libraryPath", outputDir.absolutePath,
                         "-staticLibrary", "libde265_kmp.a",
                     )
+                }
+                if (targetName == "mingwX64" && mingwStdCxxDir != null) {
+                    extraOpts("-linkerOpts", "-L$mingwStdCxxDir")
                 }
             }
         }

@@ -14,6 +14,16 @@
 
 #include "de265.h"
 
+#if defined(__linux__) && !defined(__ANDROID__)
+/*
+ * The host (or cross) libstdc++ used to compile libde265 can reference glibc's
+ * single-threaded fast path. Kotlin/Native links Linux programs against an
+ * older sysroot that does not export it, so provide a weak fallback: at runtime
+ * the real libc definition wins, and the test/klib link succeeds either way.
+ */
+extern "C" __attribute__((weak)) char __libc_single_threaded = 0;
+#endif
+
 struct dk_decoder {
   de265_decoder_context *ctx;
 
