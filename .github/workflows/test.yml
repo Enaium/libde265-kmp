@@ -1,0 +1,283 @@
+name: Test
+
+# Manual only: the workflow is never started by a push or pull request.
+"on":
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The libde265 submodule is recorded with the upstream HTTPS URL, so a plain
+# `git submodule update` works on every runner.
+jobs:
+  test-macos:
+    name: Test macOS (JVM + Apple + web)
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Check out the libde265 submodule
+        run: git submodule update --init --recursive
+
+      - name: Configure JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Setup Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          "$HOME/emsdk/emsdk" install latest
+          "$HOME/emsdk/emsdk" activate latest
+          echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
+
+      - name: Run JVM, native and web tests
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :libde265-kmp:jvmTest
+          :libde265-kmp:macosArm64Test
+          :libde265-kmp:jsNodeTest
+          :libde265-kmp:wasmJsNodeTest
+
+      - name: Compile the remaining Apple targets
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :libde265-kmp:compileKotlinMacosX64
+          :libde265-kmp:compileKotlinIosArm64
+          :libde265-kmp:compileKotlinIosX64
+          :libde265-kmp:compileKotlinIosSimulatorArm64
+          :libde265-kmp:compileKotlinTvosArm64
+          :libde265-kmp:compileKotlinTvosSimulatorArm64
+          :libde265-kmp:compileKotlinWatchosArm64
+          :libde265-kmp:compileKotlinWatchosSimulatorArm64
+          :libde265-kmp:compileKotlinWatchosDeviceArm64
+
+      - name: Link the native example for macOS
+        run: ./gradlew --no-daemon --stacktrace :examples:android-native:linkDebugExecutableMacosArm64
+
+      - name: Build the browser example
+        run: ./gradlew --no-daemon --stacktrace :examples:browser:jsBrowserDistribution
+
+      - name: Publish to Maven Local
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :libde265-kmp:publishToMavenLocal
+          -x :libde265-kmp:publishAndroidPublicationToMavenLocal
+          -x :libde265-kmp:publishLinuxX64PublicationToMavenLocal
+          -x :libde265-kmp:publishLinuxArm64PublicationToMavenLocal
+          -x :libde265-kmp:publishMingwX64PublicationToMavenLocal
+          -x :libde265-kmp:publishAndroidNativeArm64PublicationToMavenLocal
+          -x :libde265-kmp:publishAndroidNativeArm32PublicationToMavenLocal
+          -x :libde265-kmp:publishAndroidNativeX64PublicationToMavenLocal
+          -x :libde265-kmp:publishAndroidNativeX86PublicationToMavenLocal
+          :jni-jvm-darwin-aarch64:publishToMavenLocal
+          :jni-jvm-darwin-x86_64:publishToMavenLocal
+
+      - name: Verify Maven Local artifacts
+        run: |
+          REPO="$HOME/.m2/repository/cn/enaium/libde265"
+          JVM_POM="$REPO/libde265-kmp-jvm/1.1.3.1/libde265-kmp-jvm-1.1.3.1.pom"
+          JNI_JAR="$REPO/libde265-kmp-jni-jvm-darwin-aarch64/1.1.3.1/libde265-kmp-jni-jvm-darwin-aarch64-1.1.3.1.jar"
+          test -f "$JVM_POM" || { echo "FAIL: JVM POM missing"; exit 1; }
+          grep -q "libde265-kmp-jni-jvm-darwin-aarch64" "$JVM_POM" || { echo "FAIL: JVM POM lacks JNI runtime dependency"; exit 1; }
+          test -f "$JNI_JAR" || { echo "FAIL: darwin JNI jar missing"; exit 1; }
+          unzip -l "$JNI_JAR" | grep -q "libde265_jni.dylib" || { echo "FAIL: dylib missing from JNI jar"; exit 1; }
+          test -n "$(find "$REPO" -name '*.klib' -print -quit)" || { echo "FAIL: no Apple/web klib published"; exit 1; }
+          for artifact in \
+            libde265-kmp-jvm \
+            libde265-kmp-macosarm64 libde265-kmp-macosx64 \
+            libde265-kmp-iosarm64 libde265-kmp-iosx64 libde265-kmp-iossimulatorarm64 \
+            libde265-kmp-tvosarm64 libde265-kmp-tvossimulatorarm64 \
+            libde265-kmp-watchosarm64 libde265-kmp-watchossimulatorarm64 libde265-kmp-watchosdevicearm64 \
+            libde265-kmp-js libde265-kmp-wasm-js; do
+            if [ ! -d "$REPO/$artifact/1.1.3.1" ]; then
+              echo "FAIL: missing Maven Local artifact $artifact"
+              exit 1
+            fi
+          done
+          echo "OK: Maven Local artifacts present; klibs=$(find "$REPO" -name '*.klib' | wc -l)"
+
+  test-linux:
+    name: Test Linux (JVM + Linux + cross + Android)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Check out the libde265 submodule
+        run: git submodule update --init --recursive
+
+      - name: Configure JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+
+      - name: Install Android SDK components
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-37.0" "platforms;android-37.1" "ndk;27.0.12077973" >/dev/null
+
+      - name: Run JVM, Linux, Android host and cross-target tests
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :libde265-kmp:jvmTest
+          :libde265-kmp:linuxX64Test
+          :libde265-kmp:testAndroidHostTest
+          :libde265-kmp:linkDebugTestMingwX64
+          :libde265-kmp:linkDebugTestLinuxArm64
+          :libde265-kmp:compileKotlinLinuxArm64
+          --continue
+
+      - name: Assemble the Android examples
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :examples:android-jvm:assembleDebug
+          :examples:android-native:android:assembleDebug
+
+      - name: Verify the native example APK
+        run: |
+          APK="examples/android-native/android/build/outputs/apk/debug/android-debug.apk"
+          test -f "$APK" || { echo "FAIL: native example APK missing"; exit 1; }
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            unzip -l "$APK" | grep -q "lib/$abi/libmain.so" || { echo "FAIL: APK lacks $abi libmain.so"; exit 1; }
+            unzip -l "$APK" | grep -q "lib/$abi/libc++_shared.so" || { echo "FAIL: APK lacks $abi libc++_shared.so"; exit 1; }
+          done
+          echo "OK: libmain.so and libc++_shared.so for every ABI"
+
+      - name: Verify the JNI library per ABI
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            lib="libde265-kmp/build/jniLibs/$abi/libde265_jni.so"
+            echo "=== $abi: $lib ==="
+            if [ ! -f "$lib" ]; then
+              echo "FAIL: no JNI library for $abi"
+              exit 1
+            fi
+            echo "OK: $(du -h "$lib" | cut -f1)"
+          done
+
+      - name: Verify the static archives
+        run: |
+          for target in linuxX64 linuxArm64 mingwX64; do
+            archive="libde265-kmp/build/native/$target/libde265_kmp.a"
+            echo "=== $target: $archive ==="
+            if [ ! -f "$archive" ]; then
+              echo "FAIL: no static archive for $target"
+              exit 1
+            fi
+            echo "OK: $(du -h "$archive" | cut -f1)"
+          done
+
+      - name: Publish to Maven Local
+        run: >
+          ./gradlew --no-daemon --stacktrace
+          :libde265-kmp:publishAndroidPublicationToMavenLocal
+          :libde265-kmp:publishLinuxX64PublicationToMavenLocal
+          :libde265-kmp:publishLinuxArm64PublicationToMavenLocal
+          :libde265-kmp:publishMingwX64PublicationToMavenLocal
+          :libde265-kmp:publishAndroidNativeArm64PublicationToMavenLocal
+          :libde265-kmp:publishAndroidNativeArm32PublicationToMavenLocal
+          :libde265-kmp:publishAndroidNativeX64PublicationToMavenLocal
+          :libde265-kmp:publishAndroidNativeX86PublicationToMavenLocal
+          :jni-jvm-linux-x86_64:publishToMavenLocal
+          :jni-jvm-linux-aarch64:publishToMavenLocal
+
+      - name: Verify Maven Local artifacts
+        run: |
+          REPO="$HOME/.m2/repository/cn/enaium/libde265"
+          AAR=$(find "$REPO" -path "*libde265-kmp-android/1.1.3.1/*.aar" -print -quit)
+          test -n "$AAR" || { echo "FAIL: Android AAR missing"; exit 1; }
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            unzip -l "$AAR" | grep -q "jni/$abi/libde265_jni.so" || {
+              echo "FAIL: AAR lacks $abi JNI library"
+              exit 1
+            }
+          done
+          JNI_JAR="$REPO/libde265-kmp-jni-jvm-linux-x86_64/1.1.3.1/libde265-kmp-jni-jvm-linux-x86_64-1.1.3.1.jar"
+          test -f "$JNI_JAR" || { echo "FAIL: linux JNI jar missing"; exit 1; }
+          unzip -l "$JNI_JAR" | grep -q "libde265_jni.so" || { echo "FAIL: .so missing from linux JNI jar"; exit 1; }
+          test -n "$(find "$REPO" -name '*.klib' -print -quit)" || { echo "FAIL: no Linux/MinGW klib published"; exit 1; }
+          for artifact in \
+            libde265-kmp-android \
+            libde265-kmp-linuxx64 libde265-kmp-linuxarm64 \
+            libde265-kmp-mingwx64 \
+            libde265-kmp-androidnativearm64 libde265-kmp-androidnativearm32 \
+            libde265-kmp-androidnativex64 libde265-kmp-androidnativex86; do
+            if [ ! -d "$REPO/$artifact/1.1.3.1" ]; then
+              echo "FAIL: missing Maven Local artifact $artifact"
+              exit 1
+            fi
+          done
+          echo "OK: Android AAR, Linux JNI and klibs present"
+
+  test-windows:
+    name: Test Windows (JVM + MinGW)
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Check out the libde265 submodule
+        run: git submodule update --init --recursive
+
+      - name: Configure JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install MinGW
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\bin" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run JVM and MinGW tests
+        run: ./gradlew --no-daemon --stacktrace :libde265-kmp:jvmTest :libde265-kmp:mingwX64Test
+
+      - name: Verify the Windows JNI library
+        shell: pwsh
+        run: |
+          $dll = "jni/jvm/windows-x86_64/build/jni-native/windows-x86_64/de265_jni.dll"
+          if (!(Test-Path $dll)) { throw "Missing $dll" }
+          Write-Output "OK: $((Get-Item $dll).Length) bytes"
+
+      - name: Publish to Maven Local
+        shell: cmd
+        run: ./gradlew --no-daemon --stacktrace :jni-jvm-windows-x86_64:publishToMavenLocal
+
+      - name: Verify Maven Local artifact
+        shell: pwsh
+        run: |
+          $jar = Join-Path $env:USERPROFILE ".m2\repository\cn\enaium\libde265\libde265-kmp-jni-jvm-windows-x86_64\1.1.3.1\libde265-kmp-jni-jvm-windows-x86_64-1.1.3.1.jar"
+          if (!(Test-Path $jar)) { throw "Missing $jar" }
+          $entries = & jar tf $jar
+          if (-not ($entries -match "de265_jni.dll")) { throw "de265_jni.dll missing from $jar" }
+          Write-Output "OK: Maven Local JNI jar contains de265_jni.dll"
