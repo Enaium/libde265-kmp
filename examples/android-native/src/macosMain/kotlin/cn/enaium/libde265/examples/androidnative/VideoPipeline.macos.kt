@@ -62,7 +62,7 @@ private class DesktopVideoPipeline : VideoPipeline {
             }
             val size = width * height * 4
             if (rgba.size != size) rgba = ByteArray(size)
-            LibYuv.i420ToRgba(frame.y, frame.u, frame.v, rgba, width, height)
+            LibYuv.i420ToRgbaBt709(frame.y, frame.u, frame.v, rgba, width, height)
             latest = VideoFrame(width, height, rgba.copyOf())
             decodedFrames++
             decodedBytes += frame.byteSize

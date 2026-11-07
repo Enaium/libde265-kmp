@@ -188,8 +188,8 @@ internal object HevcAnnexB {
 /** The MIME type this example encodes. */
 internal val HEVC_MIME: String = MediaFormat.MIMETYPE_VIDEO_HEVC
 
-/** `COLOR_FormatYUV420Flexible`, accepted by every modern HEVC encoder. */
-internal const val COLOR_FORMAT_YUV420_FLEXIBLE = 0x7F420888
+/** `COLOR_FormatYUV420SemiPlanar` (NV12), what the packed input writes. */
+internal const val COLOR_FORMAT_YUV420_SEMI_PLANAR = 0x15
 
 /** MediaCodec output flag value, kept local to avoid an API-level import. */
 internal val FLAG_KEY_FRAME: Int = MediaCodec.BUFFER_FLAG_KEY_FRAME

@@ -343,7 +343,7 @@ private class AndroidVideoPipeline : VideoPipeline {
     private fun render(frame: De265Frame) {
         if (frame.chroma != De265Chroma.YUV420) return
         val rgba = ByteArray(frame.width * frame.height * 4)
-        LibYuv.i420ToRgba(
+        LibYuv.i420ToRgbaBt709(
             frame.y, frame.u, frame.v, rgba,
             frame.width, frame.height,
         )

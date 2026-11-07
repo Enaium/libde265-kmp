@@ -47,6 +47,7 @@ internal data class PipelineStats(
  * method safe to call from the camera executor.
  */
 internal class HevcPipeline(
+    private val frameLock: Any,
     private val onFrame: (Bitmap) -> Unit,
     private val onStats: (PipelineStats) -> Unit,
     private val onError: (Throwable) -> Unit,
@@ -81,7 +82,7 @@ internal class HevcPipeline(
     }
 
     private fun runPipeline() {
-        val session = Session(onFrame, onStats)
+        val session = Session(frameLock, onFrame, onStats)
         try {
             while (running || queue.isNotEmpty()) {
                 val frame = queue.poll(20, TimeUnit.MILLISECONDS) ?: continue
@@ -96,6 +97,7 @@ internal class HevcPipeline(
     }
 
     private class Session(
+        private val frameLock: Any,
         private val onFrame: (Bitmap) -> Unit,
         private val onStats: (PipelineStats) -> Unit,
     ) {
@@ -161,7 +163,7 @@ internal class HevcPipeline(
             width = frame.width
             height = frame.height
             val format = MediaFormat.createVideoFormat(HEVC_MIME, width, height).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, COLOR_FORMAT_YUV420_FLEXIBLE)
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, COLOR_FORMAT_YUV420_SEMI_PLANAR)
                 setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE)
                 setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
@@ -187,10 +189,11 @@ internal class HevcPipeline(
             }
             val pts = if (frame.presentationTimeUs > 0) frame.presentationTimeUs else lastPtsUs + 33_333
             lastPtsUs = pts
-            // Qualcomm's HEVC encoder rejects the Image buffer that
-            // getInputImage() hands out ("Unsupported input buffer") while it
-            // accepts a packed I420 byte buffer, so always use the latter.
-            val packed = frame.toPackedBuffer(FourCC.I420)
+            // Qualcomm's HEVC encoder advertises the flexible format but reads
+            // the packed input as NV12; feeding I420 chroma makes the top and
+            // bottom halves of the picture take different hues. The Image path
+            // is rejected outright ("Unsupported input buffer").
+            val packed = frame.toPackedBuffer(FourCC.NV12)
             val buffer = codec.getInputBuffer(index)
             if (buffer == null) {
                 codec.queueInputBuffer(index, 0, 0, pts, 0)
@@ -258,14 +261,16 @@ internal class HevcPipeline(
             }
             val size = frame.width * frame.height * 4
             if (rgba.size != size) rgba = ByteArray(size)
-            LibYuv.i420ToRgba(
+            LibYuv.i420ToRgbaBt709(
                 frame.y, frame.u, frame.v, rgba,
                 frame.width, frame.height,
             )
             val target = bitmap?.takeIf { it.width == frame.width && it.height == frame.height }
                 ?: Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
                     .also { bitmap = it }
-            target.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
+            synchronized(frameLock) {
+                target.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
+            }
             onFrame(target)
         }
 

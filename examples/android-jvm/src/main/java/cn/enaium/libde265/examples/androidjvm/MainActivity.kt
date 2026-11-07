@@ -89,6 +89,9 @@ private fun CameraScreen() {
     var stats by remember { mutableStateOf<PipelineStats?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<VideoPreviewView?>(null) }
+    // The pipeline renders into the preview bitmap from its worker thread; the
+    // view draws it on the main thread, so both sides share this lock.
+    val frameLock = remember { Any() }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -101,7 +104,7 @@ private fun CameraScreen() {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    VideoPreviewView(ctx).also { preview = it }
+                    VideoPreviewView(ctx, frameLock).also { preview = it }
                 },
             )
             if (!permissionGranted) {
@@ -144,6 +147,7 @@ private fun CameraScreen() {
             return@DisposableEffect onDispose { }
         }
         val pipeline = HevcPipeline(
+            frameLock = frameLock,
             onFrame = { bitmap -> preview?.setFrame(bitmap) },
             onStats = { updated -> stats = updated },
             onError = { throwable ->
@@ -227,8 +231,9 @@ private fun bitrateKbps(stats: PipelineStats): Double {
  * Draws the newest decoded bitmap scaled to fit, without allocating a new
  * bitmap per frame (the pipeline reuses its own buffer).
  */
-private class VideoPreviewView(context: Context) : View(context) {
+private class VideoPreviewView(context: Context, private val frameLock: Any) : View(context) {
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    @Volatile
     private var frame: Bitmap? = null
 
     fun setFrame(bitmap: Bitmap) {
@@ -246,12 +251,14 @@ private class VideoPreviewView(context: Context) : View(context) {
         val drawHeight = bitmap.height * scale
         val left = (width - drawWidth) / 2f
         val top = (height - drawHeight) / 2f
-        canvas.drawBitmap(
-            bitmap,
-            null,
-            android.graphics.RectF(left, top, left + drawWidth, top + drawHeight),
-            paint,
-        )
+        synchronized(frameLock) {
+            canvas.drawBitmap(
+                bitmap,
+                null,
+                android.graphics.RectF(left, top, left + drawWidth, top + drawHeight),
+                paint,
+            )
+        }
     }
 }
 
