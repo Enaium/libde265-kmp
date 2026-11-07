@@ -238,7 +238,9 @@ private class VideoPreviewView(context: Context, private val frameLock: Any) : V
 
     fun setFrame(bitmap: Bitmap) {
         frame = bitmap
-        invalidate()
+        // setFrame runs on the pipeline worker thread; invalidate() itself is
+        // only safe on the UI thread.
+        postInvalidateOnAnimation()
     }
 
     override fun onDraw(canvas: Canvas) {
