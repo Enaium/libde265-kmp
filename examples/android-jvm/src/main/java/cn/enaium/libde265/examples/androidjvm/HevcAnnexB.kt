@@ -7,6 +7,7 @@ package cn.enaium.libde265.examples.androidjvm
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.util.Log
 import java.nio.ByteBuffer
 
 /**
@@ -42,7 +43,7 @@ internal object HevcAnnexB {
             copy.get(data)
             data
         }
-        if (source.size >= 4 && isStartCode(source, 0)) {
+        if (startCodeSize(source, 0) > 0) {
             return Config(source, 4)
         }
         require(source.size > 23) { "hvcC record is only ${source.size} bytes" }
@@ -103,10 +104,14 @@ internal object HevcAnnexB {
         val copy = buffer.duplicate()
         copy.position(offset)
         copy.limit(offset + size)
-        if (size >= 4 && isStartCode(copy, offset)) {
+        if (startCodeSize(copy, offset) > 0) {
             val data = ByteArray(size)
             copy.get(data)
-            return data
+            if (!prepend || prefix == null) return data
+            val out = ByteArray(prefix.size + data.size)
+            prefix.copyInto(out, 0)
+            data.copyInto(out, prefix.size)
+            return out
         }
 
         val nals = ArrayList<ByteArray>()
@@ -146,16 +151,26 @@ internal object HevcAnnexB {
         return output
     }
 
-    private fun isStartCode(data: ByteArray, offset: Int): Boolean =
+    /** 4 for a four-byte start code, 3 for a three-byte one, 0 otherwise. */
+    private fun startCodeSize(data: ByteArray, offset: Int): Int = when {
+        offset + 4 <= data.size && data[offset] == 0.toByte() &&
+            data[offset + 1] == 0.toByte() && data[offset + 2] == 0.toByte() &&
+            data[offset + 3] == 1.toByte() -> 4
         offset + 3 <= data.size && data[offset] == 0.toByte() &&
-            data[offset + 1] == 0.toByte() && data[offset + 2] == 1.toByte()
+            data[offset + 1] == 0.toByte() && data[offset + 2] == 1.toByte() -> 3
+        else -> 0
+    }
 
-    private fun isStartCode(buffer: ByteBuffer, offset: Int): Boolean {
+    private fun startCodeSize(buffer: ByteBuffer, offset: Int): Int {
         val slice = buffer.duplicate()
-        return offset + 3 <= slice.limit() &&
-            slice.get(offset) == 0.toByte() &&
-            slice.get(offset + 1) == 0.toByte() &&
-            slice.get(offset + 2) == 1.toByte()
+        return when {
+            offset + 4 <= slice.limit() && slice.get(offset) == 0.toByte() &&
+                slice.get(offset + 1) == 0.toByte() && slice.get(offset + 2) == 0.toByte() &&
+                slice.get(offset + 3) == 1.toByte() -> 4
+            offset + 3 <= slice.limit() && slice.get(offset) == 0.toByte() &&
+                slice.get(offset + 1) == 0.toByte() && slice.get(offset + 2) == 1.toByte() -> 3
+            else -> 0
+        }
     }
 
     private fun readUInt16(data: ByteArray, offset: Int): Int =

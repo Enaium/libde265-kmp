@@ -187,23 +187,20 @@ internal class HevcPipeline(
             }
             val pts = if (frame.presentationTimeUs > 0) frame.presentationTimeUs else lastPtsUs + 33_333
             lastPtsUs = pts
-            val image = codec.getInputImage(index)
-            if (image != null) {
-                image.writeI420(frame)
+            // Qualcomm's HEVC encoder rejects the Image buffer that
+            // getInputImage() hands out ("Unsupported input buffer") while it
+            // accepts a packed I420 byte buffer, so always use the latter.
+            val packed = frame.toPackedBuffer(FourCC.I420)
+            val buffer = codec.getInputBuffer(index)
+            if (buffer == null) {
                 codec.queueInputBuffer(index, 0, 0, pts, 0)
-            } else {
-                val packed = frame.toPackedBuffer(FourCC.I420)
-                val buffer = codec.getInputBuffer(index)
-                if (buffer == null) {
-                    codec.queueInputBuffer(index, 0, 0, pts, 0)
-                    droppedFrames++
-                    return
-                }
-                buffer.clear()
-                val packedSize = packed.remaining()
-                buffer.put(packed)
-                codec.queueInputBuffer(index, 0, packedSize, pts, 0)
+                droppedFrames++
+                return
             }
+            buffer.clear()
+            val packedSize = packed.remaining()
+            buffer.put(packed)
+            codec.queueInputBuffer(index, 0, packedSize, pts, 0)
         }
 
         private fun drain(codec: MediaCodec) {
@@ -215,7 +212,9 @@ internal class HevcPipeline(
                     index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         val format = codec.outputFormat
                         format.getByteBuffer("csd-0")?.let { csd ->
-                            config = HevcAnnexB.parseConfig(csd)
+                            config = runCatching { HevcAnnexB.parseConfig(csd) }
+                                .onFailure { Log.e(TAG, "hvcC parse failed", it) }
+                                .getOrNull()
                             Log.i(TAG, "csd: ${config?.prefix?.size ?: 0} bytes")
                         }
                     }

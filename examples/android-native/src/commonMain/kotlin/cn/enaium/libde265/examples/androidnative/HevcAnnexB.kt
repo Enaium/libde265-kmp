@@ -23,7 +23,7 @@ internal object HevcAnnexB {
     )
 
     fun parseConfig(source: ByteArray): Config {
-        if (source.size >= 4 && isStartCode(source, 0)) {
+        if (startCodeSize(source, 0) > 0) {
             return Config(source, 4)
         }
         require(source.size > 23) { "hvcC record is only ${source.size} bytes" }
@@ -77,8 +77,13 @@ internal object HevcAnnexB {
         prepend: Boolean,
     ): ByteArray {
         if (size <= 0 || offset < 0 || offset + size > source.size) return ByteArray(0)
-        if (size >= 4 && isStartCode(source, offset)) {
-            return source.copyOfRange(offset, offset + size)
+        if (startCodeSize(source, offset) > 0) {
+            val data = source.copyOfRange(offset, offset + size)
+            if (!prepend || prefix == null) return data
+            val out = ByteArray(prefix.size + data.size)
+            prefix.copyInto(out, 0)
+            data.copyInto(out, prefix.size)
+            return out
         }
 
         val nals = ArrayList<ByteArray>()
@@ -134,9 +139,15 @@ internal object HevcAnnexB {
         return false
     }
 
-    private fun isStartCode(data: ByteArray, offset: Int): Boolean =
+    /** 4 for a four-byte start code, 3 for a three-byte one, 0 otherwise. */
+    private fun startCodeSize(data: ByteArray, offset: Int): Int = when {
+        offset + 4 <= data.size && data[offset] == 0.toByte() &&
+            data[offset + 1] == 0.toByte() && data[offset + 2] == 0.toByte() &&
+            data[offset + 3] == 1.toByte() -> 4
         offset + 3 <= data.size && data[offset] == 0.toByte() &&
-            data[offset + 1] == 0.toByte() && data[offset + 2] == 1.toByte()
+            data[offset + 1] == 0.toByte() && data[offset + 2] == 1.toByte() -> 3
+        else -> 0
+    }
 
     private fun readUInt16(data: ByteArray, offset: Int): Int =
         ((data[offset].toInt() and 0xFF) shl 8) or (data[offset + 1].toInt() and 0xFF)
