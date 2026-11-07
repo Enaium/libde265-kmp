@@ -2,6 +2,16 @@ name: Publish
 
 "on":
   workflow_dispatch:
+    inputs:
+      targets:
+        description: "Runner subset to publish"
+        type: choice
+        default: all
+        options:
+          - all
+          - macos
+          - linux
+          - windows
 
 # Publishes every artifact from the runner that can build it. Maven Central
 # coordinates are immutable, so each `:jni-jvm-{classifier}` and each native
@@ -23,6 +33,7 @@ name: Publish
 jobs:
   publish-macos:
     name: Publish macOS (JVM + Apple + web + darwin JNI)
+    if: inputs.targets == 'all' || inputs.targets == 'macos'
     runs-on: macos-15
     steps:
       - name: Check out repository
@@ -79,6 +90,7 @@ jobs:
 
   publish-linux:
     name: Publish Linux (Android AAR + Linux/mingw + linux JNI)
+    if: inputs.targets == 'all' || inputs.targets == 'linux'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -101,8 +113,8 @@ jobs:
       - name: Install cross-compilers
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu \
-            gcc-mingw-w64-x86-64
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
 
       - name: Install Android SDK components
         run: |
@@ -139,6 +151,7 @@ jobs:
 
   publish-windows:
     name: Publish Windows JNI
+    if: inputs.targets == 'all' || inputs.targets == 'windows'
     runs-on: windows-latest
     steps:
       - name: Check out repository
