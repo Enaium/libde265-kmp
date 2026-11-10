@@ -35,6 +35,22 @@ initialization is required at runtime. The web build is single-threaded; every
 other target can start libde265 worker threads through
 `Libde265Decoder.workerThreads`.
 
+The standalone module, the JS glue and the licence are also published as the
+`@enaium/libde265-kmp` npm package (`:libde265-kmp:assembleWasmNpm` stages it in
+`build/npm`, `:libde265-kmp:publishWasmNpm` publishes it). npm only accepts
+three-component semver, so `1.1.3.1` is published as `1.1.3-1` under
+the `latest` tag. Plain JavaScript apps instantiate it without Kotlin:
+
+```js
+import { initDe265Kmp } from "@enaium/libde265-kmp";
+
+const module = await initDe265Kmp();
+console.log(module.versionString());
+```
+
+The npm token is read from `npm.publish.key` in `~/.gradle/gradle.properties`
+(or `-Pnpm.publish.key=<token>`); CI reads the `NPM_PUBLISH_KEY` secret.
+
 This build is 8-bit only. The decoded frames are planar 8-bit YUV.
 
 ## Using the library
