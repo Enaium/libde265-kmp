@@ -17,30 +17,39 @@ import cn.enaium.camera.PixelFormat
 import cn.enaium.camera.cameraSystem
 import cn.enaium.libde265.De265Chroma
 import cn.enaium.libde265.Libde265Decoder
+import cn.enaium.x265.X265ChromaFormat
+import cn.enaium.x265.X265Encoder
+import cn.enaium.x265.X265LogLevel
+import cn.enaium.x265.X265Param
+import cn.enaium.x265.X265Picture
+import cn.enaium.x265.X265Preset
+import cn.enaium.x265.X265Tune
 import kotlin.concurrent.atomics.AtomicReference
-import kotlin.io.encoding.Base64
 
 /** What the UI shows above the pictures. */
 internal data class ExampleStatus(
     val source: String,
+    val encodedFrames: Long,
+    val encodedBytes: Long,
     val decodedFrames: Long,
     val lastFrameSize: Int,
     val error: String?,
 )
 
 /**
- * Camera (camera-kmp) plus the libde265 decoder.
+ * Camera (camera-kmp) -> x265 encode -> libde265 decode.
  *
- * The camera picture proves the shared capture path on every target; the
- * decoder loop repeatedly feeds the embedded HEVC stream so the binding is
- * exercised even when no camera is available.
+ * The captured I420 picture is encoded with x265 and the Annex-B access units
+ * are fed straight into libde265, so the decoded picture is the camera picture
+ * after a full round trip. A deterministic test pattern takes over only until
+ * the camera delivers its first frame (or when no camera exists), so the
+ * preview never alternates between the two sources.
  */
 internal class ExamplePipeline {
     private val camera = CameraSource()
-    private val decoder = De265Pipeline()
+    private val loop = EncodeDecodeLoop()
     private val pattern = TestPattern(WIDTH, HEIGHT)
-    private var pump = 0L
-    private var lastDecoded: I420Frame? = null
+    private var lastCamera: I420Frame? = null
 
     var preview: I420Frame? = null
         private set
@@ -51,17 +60,19 @@ internal class ExamplePipeline {
     val status: ExampleStatus
         get() = ExampleStatus(
             source = camera.source,
-            decodedFrames = decoder.frames,
-            lastFrameSize = decoder.lastFrameSize,
-            error = camera.error ?: decoder.error,
+            encodedFrames = loop.encodedFrames,
+            encodedBytes = loop.encodedBytes,
+            decodedFrames = loop.decodedFrames,
+            lastFrameSize = loop.lastFrameSize,
+            error = camera.error ?: loop.error,
         )
 
     fun pump() {
-        preview = camera.poll() ?: pattern.next()
-        if (pump++ % 2L == 0L) {
-            decoder.step()?.let { lastDecoded = it }
-        }
-        decoded = lastDecoded
+        val fresh = camera.poll()
+        if (fresh != null) lastCamera = fresh
+        val current = lastCamera ?: pattern.next()
+        preview = current
+        loop.step(current)?.let { decoded = it }
     }
 
     fun restartCamera() {
@@ -70,7 +81,7 @@ internal class ExamplePipeline {
 
     fun close() {
         camera.close()
-        decoder.close()
+        loop.close()
     }
 
     private companion object {
@@ -121,7 +132,7 @@ private class CameraSource {
                 { frame -> latest.store(frame.toI420()) },
                 { failure ->
                     error = failure.message ?: failure.toString()
-                    source = "camera error - synthetic test pattern"
+                    source = "camera error - last picture"
                 },
             )
             source = "${camera.name} ${session.format.width}x${session.format.height} " +
@@ -146,13 +157,21 @@ private class CameraSource {
     }
 }
 
-/** Decodes the embedded Annex-B stream over and over. */
-private class De265Pipeline {
+/**
+ * The capture encoder: MediaCodec/WebCodecs where the platform exposes them,
+ * x265 on the desktop targets; its Annex-B output is decoded by libde265.
+ */
+private class EncodeDecodeLoop {
+    private var encoder: PlatformEncoder? = null
     private val decoder = Libde265Decoder.create()
-    private val stream: ByteArray by lazy { Base64.decode(SAMPLE_STREAM_BASE64) }
-    private var pts = 0L
 
-    var frames = 0L
+    var encodedFrames = 0L
+        private set
+
+    var encodedBytes = 0L
+        private set
+
+    var decodedFrames = 0L
         private set
 
     var lastFrameSize = 0
@@ -161,26 +180,97 @@ private class De265Pipeline {
     var error: String? = null
         private set
 
-    fun step(): I420Frame? {
+    private var pumps = 0L
+    private var usingPlatform = false
+
+    fun step(frame: I420Frame): I420Frame? {
         if (error != null) return null
         return try {
-            var last: I420Frame? = null
-            for (frame in decoder.decode(stream, pts * 33_333L)) {
-                if (frame.chroma != De265Chroma.YUV420) continue
-                frames++
-                lastFrameSize = frame.byteSize
-                last = I420Frame(frame.width, frame.height, frame.y, frame.u, frame.v, frame.pts)
+            var active = encoder ?: openEncoder(frame.width, frame.height)
+            pumps++
+            if (active.status == -1 || (usingPlatform && pumps > 60 && encodedFrames == 0L)) {
+                active.close()
+                active = X265PlatformEncoder(frame.width, frame.height)
+                encoder = active
             }
-            pts++
-            last
+            for (chunk in active.encode(frame)) {
+                encodedFrames++
+                encodedBytes += chunk.data.size
+                lastFrameSize = chunk.data.size
+                feed(chunk.data, chunk.pts)
+            }
+            lastDecoded
         } catch (t: Throwable) {
             error = t.message ?: t.toString()
             null
         }
     }
 
+    private var lastDecoded: I420Frame? = null
+
+    private fun openEncoder(width: Int, height: Int): PlatformEncoder {
+        val platform = createPlatformEncoder(PlatformCodecKind.HEVC, width, height)
+        usingPlatform = platform != null
+        val selected = platform ?: X265PlatformEncoder(width, height)
+        encoder = selected
+        return selected
+    }
+
+    private fun feed(data: ByteArray, pts: Long) {
+        for (frame in decoder.decode(data, pts)) {
+            if (frame.chroma != De265Chroma.YUV420) continue
+            decodedFrames++
+            lastDecoded = I420Frame(frame.width, frame.height, frame.y, frame.u, frame.v, frame.pts)
+        }
+    }
+
     fun close() {
+        runCatching { encoder?.close() }
         runCatching { decoder.close() }
+        encoder = null
+    }
+}
+
+/** x265 fallback for the desktop targets (and browsers without WebCodecs). */
+private class X265PlatformEncoder(width: Int, height: Int) : PlatformEncoder {
+    private var encoder: X265Encoder? = null
+    private var headersSent = false
+
+    init {
+        val param = X265Param.create(width, height, X265ChromaFormat.I420, X265Preset.ULTRAFAST)
+        try {
+            param.tune(X265Tune.ZERO_LATENCY)
+            param.set("crf", 28)
+            param.set("keyint", 30)
+            param.set("repeat-headers", true)
+            param.logLevel = X265LogLevel.NONE
+            encoder = X265Encoder.open(param)
+        } finally {
+            param.close()
+        }
+    }
+
+    override fun encode(frame: I420Frame): List<EncodedChunk> {
+        val active = encoder ?: return emptyList()
+        val output = active.encode(
+            X265Picture.i420(
+                frame.y, frame.u, frame.v,
+                frame.width, frame.height,
+                if (frame.timestampNanos > 0) frame.timestampNanos / 1_000 else 0L,
+            ),
+        ) ?: return emptyList()
+        val chunks = ArrayList<EncodedChunk>(2)
+        if (!headersSent) {
+            headersSent = true
+            chunks += EncodedChunk(active.headers().parameterSets(), output.pts, true)
+        }
+        chunks += EncodedChunk(output.toAnnexB(), output.pts, output.isKeyFrame)
+        return chunks
+    }
+
+    override fun close() {
+        runCatching { encoder?.close() }
+        encoder = null
     }
 }
 
