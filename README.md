@@ -115,15 +115,16 @@ The UI shows the camera-kmp capture next to the embedded two-frame HEVC stream
 decoded by `Libde265Decoder`; the decoder runs even when no camera is
 available (CI, denied permission) by using a deterministic test pattern.
 
-The three host modules are thin wrappers around the shared code:
+`examples/common` is also the wasmJs browser host: its Emscripten runtimes
+(sdl-kmp, imgui-kmp and camera-kmp) are installed as npm packages and served
+next to the Kotlin module, and `requestAnimationFrame` drives the shared loop.
+
+The two Android host modules are thin wrappers around the shared code:
 
 - `examples/android-jvm` - an Android app whose `SDLActivity.main()` calls the
   shared `runExample()`.
 - `examples/android-native` - an Android app that packages the `libmain.so`
   built by `examples/common`; it carries no camera or UI code of its own.
-- `examples/browser` - the wasmJs host page. The Emscripten runtimes of
-  sdl-kmp, imgui-kmp and camera-kmp are installed as npm packages and served
-  next to the Kotlin module.
 
 ```bash
 # desktop entry of the shared module
@@ -133,8 +134,8 @@ The three host modules are thin wrappers around the shared code:
 ./gradlew :examples:android-jvm:assembleDebug
 ./gradlew -PandroidAbis=arm64-v8a :examples:android-native:assembleDebug
 
-./gradlew :examples:browser:wasmJsBrowserDistribution
-python3 -m http.server 8080 --directory examples/browser/build/dist/wasmJs/productionExecutable
+./gradlew :examples:common:wasmJsBrowserDistribution
+python3 -m http.server 8080 --directory examples/common/build/dist/wasmJs/productionExecutable
 # open http://localhost:8080/ - serve over HTTPS or localhost for the camera
 ```
 
@@ -155,7 +156,7 @@ the matching GCC toolchains; Android builds require the NDK pinned in
 ./gradlew :libde265-kmp:macosArm64Test
 ./gradlew :libde265-kmp:jsNodeTest :libde265-kmp:wasmJsNodeTest
 ./gradlew :libde265-kmp:testAndroidHostTest
-./gradlew :examples:browser:wasmJsBrowserDistribution
+./gradlew :examples:common:wasmJsBrowserDistribution
 ```
 
 The tests decode a real 64x64, two-frame Annex-B HEVC stream (embedded in

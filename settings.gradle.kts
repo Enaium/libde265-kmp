@@ -19,7 +19,6 @@ include(":libde265-kmp")
 include(":examples:common")
 include(":examples:android-jvm")
 include(":examples:android-native")
-include(":examples:browser")
 
 // Per-OS/arch JNI artifacts that ship the prebuilt libde265_jni shared library
 // as a classpath resource. NativeLoader extracts the matching one at runtime.
