@@ -98,8 +98,8 @@ the list is empty when libde265 needs more input. A fatal error raises
 MediaCodec exposes HEVC parameter sets as an `hvcC`
 `HEVCDecoderConfigurationRecord` in `csd-0`, and output buffers are
 length-prefixed NAL units. Convert both to Annex-B before calling `decode()`;
-the Android examples do this in `HevcAnnexB`. WebCodecs is configured with
-`hevc: { format: "annexb" }`, which already provides in-band parameter sets.
+callers must convert them to Annex-B before `decode()`. WebCodecs emits Annex-B
+directly when configured with `hevc: { format: "annexb" }`.
 
 ## Examples
 
