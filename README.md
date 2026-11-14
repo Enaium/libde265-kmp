@@ -103,52 +103,45 @@ the Android examples do this in `HevcAnnexB`. WebCodecs is configured with
 
 ## Examples
 
-### `examples/android-jvm`
+The examples share one SDL3 + Dear ImGui app in `examples/common` (targets:
+`jvm`, macOS/Linux/Windows native, Android JVM, Android Native and `wasmJs`).
+Camera frames come from [camera-kmp](https://github.com/Enaium/camera-kmp):
+Camera2 on Android, Camera2 NDK and V4L2 on Android Native,
+AVFoundation/V4L2/Media Foundation on the desktops and `getUserMedia` in the
+browser, so the same code runs on every target instead of an Android-only
+camera implementation.
 
-CameraX `ImageAnalysis` (YUV_420_888) → libyuv I420 → MediaCodec HEVC
-**encoder** (no software encoding) → `Libde265Decoder` → libyuv RGBA →
-`Bitmap` drawn by a `View`.
+The UI shows the camera-kmp capture next to the embedded two-frame HEVC stream
+decoded by `Libde265Decoder`; the decoder runs even when no camera is
+available (CI, denied permission) by using a deterministic test pattern.
 
-MediaCodec HEVC `csd-0` is parsed from `hvcC` and prepended to every keyframe;
-length-prefixed output buffers are converted to Annex-B.
+The three host modules are thin wrappers around the shared code:
+
+- `examples/android-jvm` - an Android app whose `SDLActivity.main()` calls the
+  shared `runExample()`.
+- `examples/android-native` - an Android app that packages the `libmain.so`
+  built by `examples/common`; it carries no camera or UI code of its own.
+- `examples/browser` - the wasmJs host page. The Emscripten runtimes of
+  sdl-kmp, imgui-kmp and camera-kmp are installed as npm packages and served
+  next to the Kotlin module.
 
 ```bash
+# desktop entry of the shared module
+./gradlew :examples:common:linkDebugExecutableMacosArm64
+./examples/common/build/bin/macosArm64/debugExecutable/common.kexe
+
 ./gradlew :examples:android-jvm:assembleDebug
+./gradlew -PandroidAbis=arm64-v8a :examples:android-native:assembleDebug
+
+./gradlew :examples:browser:wasmJsBrowserDistribution
+python3 -m http.server 8080 --directory examples/browser/build/dist/wasmJs/productionExecutable
+# open http://localhost:8080/ - serve over HTTPS or localhost for the camera
 ```
 
-### `examples/android-native`
-
-Camera2 NDK (`AImageReader`, YUV_420_888) → libyuv I420 → NDK `AMediaCodec`
-HEVC encoder (NV12 input) → `Libde265Decoder` → libyuv RGBA → SDL3/ImGui
-preview.
-
-The desktop build of the same module has no MediaCodec; it decodes an embedded
-HEVC stream with the same binding and presents the pictures, so the decoder
-path can be run without a device:
-
-```bash
-./gradlew :examples:android-native:linkDebugExecutableMacosArm64
-DE265_KMP_FRAMES=120 ./examples/android-native/build/bin/macosArm64/debugExecutable/android-native.kexe
-
-./gradlew :examples:android-native:android:assembleDebug
-```
-
-### `examples/browser`
-
-`getUserMedia` → WebCodecs `VideoEncoder` with
-`hevc: { format: "annexb" }` → `Libde265Decoder` (the same embedded
-WebAssembly module the published js artifact uses) → canvas.
-
-Chrome only exposes an HEVC `VideoEncoder` when the platform provides one
-(VideoToolbox on macOS, MediaFoundation on Windows, and only in builds where
-HEVC encoding is enabled). When `VideoEncoder.isConfigSupported()` reports no
-HEVC encoder, the demo says so and decodes an embedded HEVC stream with the
-binding instead, so the decoder is still exercised on the page.
-
-```bash
-./gradlew :examples:browser:jsBrowserDistribution
-# serve examples/browser/build/dist/js/productionExecutable
-```
+The SDL3 and imgui-kmp APIs are published on Maven Central
+(`cn.enaium.sdl:sdl-kmp:3.4.18.2`, `cn.enaium.imgui:imgui-kmp:1.93.0.2`); the
+browser runtimes are `@enaium/sdl-kmp@3.4.18-2`, `@enaium/imgui-kmp@1.93.0-2`
+and `@enaium/camera-kmp@1.0.0`.
 
 ## Building and testing
 
@@ -162,7 +155,7 @@ the matching GCC toolchains; Android builds require the NDK pinned in
 ./gradlew :libde265-kmp:macosArm64Test
 ./gradlew :libde265-kmp:jsNodeTest :libde265-kmp:wasmJsNodeTest
 ./gradlew :libde265-kmp:testAndroidHostTest
-./gradlew :examples:browser:jsBrowserDistribution
+./gradlew :examples:browser:wasmJsBrowserDistribution
 ```
 
 The tests decode a real 64x64, two-frame Annex-B HEVC stream (embedded in
