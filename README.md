@@ -10,7 +10,7 @@ every platform shares the same input validation and packed result format. SIMD
 kernels are disabled: the scalar decoder runs everywhere, which keeps one code
 path across x86, ARM, Android, MinGW and WebAssembly.
 
-Binding version: **1.1.3.1** (libde265 **1.1.3**, decoder only).
+Binding version: **1.0.1-fixed.1.1.3** (libde265 **1.1.3**, decoder only).
 
 ## Supported targets
 
@@ -37,9 +37,9 @@ other target can start libde265 worker threads through
 
 The standalone module, the JS glue and the licence are also published as the
 `@enaium/libde265-kmp` npm package (`:libde265-kmp:assembleWasmNpm` stages it in
-`build/npm`, `:libde265-kmp:publishWasmNpm` publishes it). npm only accepts
-three-component semver, so `1.1.3.1` is published as `1.1.3-1` under
-the `latest` tag. Plain JavaScript apps instantiate it without Kotlin:
+`build/npm`, `:libde265-kmp:publishWasmNpm` publishes it). The fixed version is
+already valid npm semver, so it is published verbatim under the `latest` tag.
+Plain JavaScript apps instantiate it without Kotlin:
 
 ```js
 import { initDe265Kmp } from "@enaium/libde265-kmp";
@@ -57,7 +57,7 @@ This build is 8-bit only. The decoded frames are planar 8-bit YUV.
 
 ```kotlin
 dependencies {
-    implementation("cn.enaium.libde265:libde265-kmp:1.1.3.1")
+    implementation("cn.enaium.libde265:libde265-kmp:1.0.1-fixed.1.1.3")
 }
 ```
 
